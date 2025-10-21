@@ -4,6 +4,24 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import pandas as pd, datetime as dt, isodate
 
+# NEW: add these
+import re, json, math, io
+from typing import List, Tuple
+
+# ---- load secrets FIRST ----
+OPENAI_KEY  = st.secrets.get("openai", {}).get("api_key", "")
+YOUTUBE_KEY = st.secrets.get("google", {}).get("youtube_api_key", "")
+
+# helpful diagnostics in the UI header (optional)
+if not OPENAI_KEY:
+    st.warning("Missing OpenAI key in Settings → Secrets. Expected:\n[openai]\napi_key = \"...\"")
+if not YOUTUBE_KEY:
+    st.warning("Missing YouTube key in Settings → Secrets. Expected:\n[google]\nyoutube_api_key = \"...\"")
+
+# ---- NOW create the OpenAI client (no proxies arg) ----
+client = OpenAI(api_key=OPENAI_KEY)
+
+
 # ---- load secrets FIRST ----
 OPENAI_KEY  = st.secrets.get("openai", {}).get("api_key", "")
 YOUTUBE_KEY = st.secrets.get("google", {}).get("youtube_api_key", "")
@@ -30,11 +48,7 @@ st.markdown(
     "based on video **titles** classified with GPT."
 )
 
-# -----------------------
-# Secrets (never shown to users)
-# -----------------------
-OPENAI_KEY  = st.secrets.get("openai", {}).get("api_key", "")
-YOUTUBE_KEY = st.secrets.get("google", {}).get("youtube_api_key", "")
+
 
 # -----------------------
 # Helpers

@@ -32,9 +32,7 @@ st.set_page_config(page_title="YouTube Sentiment  (GPT)", layout="wide")
 st.title("YouTube Sentiment Index ")
 
 st.markdown(
-    "Type a channel (e.g., `@DataDash`), pick a month, and get a sentiment index.
-    
-    Results over >0.4 = Extreme Greed, 
+    "Type a channel (e.g., `@DataDash`), pick a month, and get a sentiment index. Results over >0.4 = Extreme Greed, 
     Results <0 = Extreme Fear "
     "based on video **titles** classified with GPT."
 )

@@ -2,26 +2,38 @@ import streamlit as st
 from openai import OpenAI
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+import pandas as pd, datetime as dt, isodate
 
-import pandas as pd
-import datetime as dt
-import isodate
-import calendar, io, json, math, re
-import altair as alt
+# NEW: add these
+import re, json, math, io
 from typing import List, Tuple
 
-# ---- load secrets ONCE ----
+# ---- load secrets FIRST ----
 OPENAI_KEY  = st.secrets.get("openai", {}).get("api_key", "")
 YOUTUBE_KEY = st.secrets.get("google", {}).get("youtube_api_key", "")
 
+# helpful diagnostics in the UI header (optional)
 if not OPENAI_KEY:
     st.warning("Missing OpenAI key in Settings → Secrets. Expected:\n[openai]\napi_key = \"...\"")
 if not YOUTUBE_KEY:
     st.warning("Missing YouTube key in Settings → Secrets. Expected:\n[google]\nyoutube_api_key = \"...\"")
 
-# OpenAI client
+# ---- NOW create the OpenAI client (no proxies arg) ----
 client = OpenAI(api_key=OPENAI_KEY)
 
+
+# ---- load secrets FIRST ----
+OPENAI_KEY  = st.secrets.get("openai", {}).get("api_key", "")
+YOUTUBE_KEY = st.secrets.get("google", {}).get("youtube_api_key", "")
+
+# helpful diagnostics in the UI header (optional)
+if not OPENAI_KEY:
+    st.warning("Missing OpenAI key in Settings → Secrets. Expected:\n[openai]\napi_key = \"...\"")
+if not YOUTUBE_KEY:
+    st.warning("Missing YouTube key in Settings → Secrets. Expected:\n[google]\nyoutube_api_key = \"...\"")
+
+# ---- NOW create the OpenAI client (no proxies arg) ----
+client = OpenAI(api_key=OPENAI_KEY)
 
 
 # -----------------------
@@ -257,88 +269,20 @@ def compute_index(df: pd.DataFrame, labels: List[str]) -> Tuple[float, pd.DataFr
 # -----------------------
 with st.sidebar:
     st.header("Inputs")
-
     channel = st.text_input("Channel handle", value="@DataDash")
-
     now = dt.datetime.utcnow()
-    month_names = list(calendar.month_name)[1:]  # ["January", ..., "December"]
-    month_name  = st.selectbox("Month", month_names, index=now.month - 1)
-    month       = month_names.index(month_name) + 1
-
-    year = st.number_input(
-        "Year", min_value=2015, max_value=2035, value=now.year, step=1
-    )
-
-    # Filters videos shorter than this.
-    min_minutes = st.number_input(
-        "Min video minutes", min_value=1, max_value=120, value=5, step=1,
-        help="Videos shorter than this are excluded."
-    )
-
-    # Leave fixed; change the list if you want to allow more models.
-    model = st.selectbox(
-        "OpenAI model", ["gpt-4o-mini"], index=0, disabled=True,
-        help="Fixed to gpt-4o-mini for this app."
-    )
-
+    month = st.selectbox("Month", list(range(1,13)), index=(now.month-1))
+    year  = st.number_input("Year", min_value=2015, max_value=2035, value=now.year, step=1)
+    min_minutes = st.number_input("Min video minutes", min_value=1, max_value=120, value=5, step=1)
+    model = st.text_input("OpenAI model", value="gpt-4o-mini")
     run = st.button("Run")
-
-
-# --------- Sentiment meter ----------
-def sentiment_zone(score: float) -> str:
-    if score > 0.4:
-        return "Greed"
-    if score < 0.0:
-        return "Fear"
-    return "Neutral"
-
-def show_sentiment_meter(score: float):
-    """
-    Horizontal meter with red/gray/green zones and a needle.
-    Score in [-1, +1]:
-      [-1, 0)   -> Fear (red)
-      [0, 0.4]  -> Neutral (gray)
-      (0.4, 1]  -> Greed (green)
-    """
-    score = max(-1.0, min(1.0, float(score)))   # clamp
-    pos   = score + 1.0                         # map [-1,1] -> [0,2]
-
-    zones = pd.DataFrame([
-        {"zone": "Fear",    "x0": 0.0, "x1": 1.0, "color": "#d62728"},
-        {"zone": "Neutral", "x0": 1.0, "x1": 1.4, "color": "#999999"},
-        {"zone": "Greed",   "x0": 1.4, "x1": 2.0, "color": "#2ca02c"},
-    ])
-
-    base = alt.Chart(zones).mark_bar(height=32).encode(
-        x=alt.X("x0:Q", axis=None, scale=alt.Scale(domain=(0, 2))),
-        x2="x1:Q",
-        color=alt.Color("zone:N", scale=None, legend=None),
-        tooltip=["zone:N"]
-    )
-
-    needle = alt.Chart(pd.DataFrame({"pos": [pos]})).mark_rule(
-        color="black", size=3
-    ).encode(x="pos:Q")
-
-    label = alt.Chart(pd.DataFrame({
-        "pos": [pos],
-        "txt": [f"{score:+.2f} • {sentiment_zone(score)}"]
-    })).mark_text(dy=-10, fontWeight="bold").encode(
-        x="pos:Q", text="txt:N"
-    )
-
-    st.altair_chart((base + needle + label).properties(width=520), use_container_width=False)
-
 
 # -----------------------
 # Run
 # -----------------------
 if run:
-    # --- Fetch
     try:
-        df = fetch_channel_videos_for_month(
-            channel, YOUTUBE_KEY, int(year), int(month), int(min_minutes) * 60
-        )
+        df = fetch_channel_videos_for_month(channel, YOUTUBE_KEY, int(year), int(month), int(min_minutes)*60)
     except Exception as e:
         st.error(f"YouTube fetch failed: {e}")
         st.stop()
@@ -349,114 +293,42 @@ if run:
 
     st.success(f"Found {len(df)} videos.")
     st.write("Classifying with ChatGPT…")
-
-    # --- Classify
     try:
-        labels = classify_titles_chatgpt(
-            df["Title"].astype(str).tolist(), OPENAI_KEY, model_name=model
-        )
+        labels = classify_titles_chatgpt(df["Title"].astype(str).tolist(), OPENAI_KEY, model_name=model)
     except Exception as e:
         st.error(f"ChatGPT classification failed: {e}")
         st.stop()
 
-def show_sentiment_meter(score: float):
-    """
-    Horizontal meter with red/gray/green zones and a needle.
-    [-1, 0)   -> Fear (red)
-    [0, 0.4]  -> Neutral (gray)
-    (0.4, 1]  -> Greed (green)
-    """
-    score = max(-1.0, min(1.0, float(score)))   # clamp to [-1, 1]
-    pos   = score + 1.0                         # map [-1,1] -> [0,2]
+    idx_val, counts_tbl = compute_index(df, labels)
 
-    zones = pd.DataFrame([
-        {"zone": "Fear",    "x0": 0.0, "x1": 1.0},
-        {"zone": "Neutral", "x0": 1.0, "x1": 1.4},
-        {"zone": "Greed",   "x0": 1.4, "x1": 2.0},
-    ])
+    # Topline
+    topline = pd.DataFrame([
+        ["Total Videos", int(len(df))],
+        ["Total Views", int(df["Views"].sum()) if len(df) else 0],
+        ["Avg Views/Video", round(float(df["Views"].mean()), 2) if len(df) else 0.0],
+        ["Sentiment Index (-1..+1)", round(idx_val, 3)],
+    ], columns=["Metric","Value"])
 
-    color_scale = alt.Scale(
-        domain=["Fear", "Neutral", "Greed"],
-        range=["#d62728", "#9e9e9e", "#2ca02c"]
-    )
-
-    # Draw the bar explicitly (Altair v5: use constant y + explicit size/height)
-    base = alt.Chart(zones).mark_bar().encode(
-        x=alt.X("x0:Q", axis=None, scale=alt.Scale(domain=(0, 2))),
-        x2="x1:Q",
-        y=alt.value(0),
-        size=alt.value(30),
-        color=alt.Color("zone:N", scale=color_scale, legend=None),
-        tooltip=["zone:N"]
-    ).properties(height=50)
-
-    # Needle
-    needle = alt.Chart(pd.DataFrame({"pos": [pos]})).mark_rule(
-        color="black", size=3
-    ).encode(x="pos:Q")
-
-    # Label
-    label = alt.Chart(pd.DataFrame({
-        "pos": [pos],
-        "txt": [f"{score:+.2f} • {sentiment_zone(score)}"]
-    })).mark_text(dy=-12, fontWeight="bold", fontSize=14).encode(
-        x="pos:Q", text="txt:N"
-    )
-
-    chart = (base + needle + label).configure_view(strokeWidth=0)
-    st.altair_chart(chart, use_container_width=True)
-
-
-    # --- Topline table
-    topline = pd.DataFrame(
-        [
-            ["Total Videos", int(len(df))],
-            ["Total Views", int(df["Views"].sum()) if len(df) else 0],
-            ["Avg Views/Video", round(float(df["Views"].mean()), 2) if len(df) else 0.0],
-            ["Sentiment Index (−1..+1)", round(idx_val, 3)],
-        ],
-        columns=["Metric", "Value"],
-    )
-
-    # --- Layout
-    c1, c2 = st.columns([1, 1])
-
+    c1, c2 = st.columns([1,1])
     with c1:
         st.subheader("Topline")
-        st.dataframe(topline, use_container_width=True, hide_index=True)
-
+        st.dataframe(topline, use_container_width=True)
         st.subheader("Category counts (1-last)")
-        st.dataframe(counts_tbl, use_container_width=True, hide_index=True)
-
+        st.dataframe(counts_tbl, use_container_width=True)
     with c2:
-        # Build the labeled table (keep only our "No." column — index hidden)
         prev = df.drop(columns=["VideoId"], errors="ignore").copy()
-        prev.insert(0, "No.", range(1, len(prev) + 1))
+        prev.insert(0, "No.", range(1, len(prev)+1))
         st.subheader("Labeled Videos")
-        st.dataframe(prev, use_container_width=True, height=520, hide_index=True)
+        st.dataframe(prev, use_container_width=True, height=520)
 
-    # --- Downloads (give unique keys to avoid DuplicateWidgetID)
+    # Downloads
     csv_buf = io.StringIO()
     df.to_csv(csv_buf, index=False)
-    st.download_button(
-        "Download CSV",
-        data=csv_buf.getvalue(),
-        file_name=f"{channel.strip('@').lower()}_{year}-{int(month):02d}.csv",
-        mime="text/csv",
-        key="dl_csv",
-    )
+    st.download_button("Download CSV", data=csv_buf.getvalue(), file_name=f"{channel.strip('@').lower()}_{year}-{int(month):02d}.csv", mime="text/csv")
 
     xlsx_buf = io.BytesIO()
     with pd.ExcelWriter(xlsx_buf, engine="openpyxl") as xw:
         df.to_excel(xw, index=False, sheet_name="Videos")
         topline.to_excel(xw, index=False, sheet_name="Topline")
         counts_tbl.to_excel(xw, index=False, sheet_name="SentimentCounts")
-    st.download_button(
-        "Download Excel",
-        data=xlsx_buf.getvalue(),
-        file_name=f"{channel.strip('@').lower()}_{year}-{int(month):02d}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="dl_xlsx",
-    )
-
-
+    st.download_button("Download Excel", data=xlsx_buf.getvalue(), file_name=f"{channel.strip('@').lower()}_{year}-{int(month):02d}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

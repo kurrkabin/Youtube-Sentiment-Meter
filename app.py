@@ -27,9 +27,9 @@ client = OpenAI(api_key=OPENAI_KEY)
 # -----------------------
 # Page setup
 # -----------------------
-st.set_page_config(page_title="YouTube Sentiment Scanner (GPT)", layout="wide")
+st.set_page_config(page_title="YouTube Sentiment  (GPT)", layout="wide")
 
-st.title("YouTube Sentiment Scanner — Bullish / Bearish / Neutral (GPT)")
+st.title("YouTube Sentiment Scanner Index ")
 
 st.markdown(
     "Type a channel (e.g., `@DataDash`), pick a month, and get a sentiment index (−1..+1) "

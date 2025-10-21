@@ -1,7 +1,13 @@
 streamlit==1.38.0
-google-api-python-client==2.141.0
-openai==1.51.2
 pandas==2.2.2
 numpy==1.26.4
 isodate==0.6.1
 openpyxl==3.1.5
+
+# Google API client (with compat pins that avoid build hangs)
+google-api-python-client==2.141.0
+google-auth-httplib2==0.2.0
+protobuf<4
+
+# OpenAI
+openai==1.51.2

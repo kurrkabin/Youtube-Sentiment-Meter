@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+
+# Streamlit secrets & local config
+.streamlit/secrets.toml
+
+# OS/editor cruft
+.DS_Store
+.vscode/
+
+# Notebooks/exports (optional)
+*.csv
+*.xlsx

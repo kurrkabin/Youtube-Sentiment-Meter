@@ -3,6 +3,8 @@ from openai import OpenAI
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import pandas as pd, datetime as dt, isodate
+import calendar, io, json, math, re
+import altair as alt
 
 # NEW: add these
 import re, json, math, io
@@ -269,13 +271,67 @@ def compute_index(df: pd.DataFrame, labels: List[str]) -> Tuple[float, pd.DataFr
 # -----------------------
 with st.sidebar:
     st.header("Inputs")
+
     channel = st.text_input("Channel handle", value="@DataDash")
+
     now = dt.datetime.utcnow()
-    month = st.selectbox("Month", list(range(1,13)), index=(now.month-1))
-    year  = st.number_input("Year", min_value=2015, max_value=2035, value=now.year, step=1)
-    min_minutes = st.number_input("Min video minutes", min_value=1, max_value=120, value=5, step=1)
-    model = st.text_input("OpenAI model", value="gpt-4o-mini")
+    month_names = list(calendar.month_name)[1:]  # ["January", ... , "December"]
+    month_name  = st.selectbox("Month", month_names, index=now.month - 1)
+    month       = month_names.index(month_name) + 1
+
+    year        = st.number_input("Year", min_value=2015, max_value=2035,
+                                  value=now.year, step=1)
+
+    # This *does* work — we filter anything shorter than this.
+    min_minutes = st.number_input("Min video minutes", min_value=1, max_value=120,
+                                  value=5, step=1, help="Videos shorter than this are excluded.")
+
+    # Keep the model fixed for stability; you can change it by editing the list.
+    model = st.selectbox("OpenAI model", ["gpt-4o-mini"], index=0, disabled=True,
+                         help="Fixed to gpt-4o-mini for this app.")
     run = st.button("Run")
+
+def sentiment_zone(score: float) -> str:
+    if score > 0.4:
+        return "Greed"
+    if score < 0.0:
+        return "Fear"
+    return "Neutral"
+
+def show_sentiment_meter(score: float):
+    """
+    A clean horizontal meter with red / gray / green zones and a needle.
+    Score is in [-1, +1]. Zones:
+      - [-1, 0): Fear (red)
+      - [0, 0.4]: Neutral (gray)
+      - (0.4, 1]: Greed (green)
+    """
+    score = max(-1.0, min(1.0, float(score)))       # clamp
+    pos   = score + 1.0                              # map [-1,1] -> [0,2]
+
+    zones = pd.DataFrame([
+        {"zone": "Fear",    "x0": 0.0, "x1": 1.0, "color": "#d62728"},
+        {"zone": "Neutral", "x0": 1.0, "x1": 1.4, "color": "#999999"},
+        {"zone": "Greed",   "x0": 1.4, "x1": 2.0, "color": "#2ca02c"},
+    ])
+
+    base = alt.Chart(zones).mark_bar(height=32).encode(
+        x=alt.X("x0:Q", axis=None, scale=alt.Scale(domain=(0, 2))),
+        x2="x1:Q",
+        color=alt.Color("zone:N", scale=None, legend=None),
+        tooltip=["zone:N"]
+    )
+
+    needle = alt.Chart(pd.DataFrame({"pos": [pos]})).mark_rule(
+        color="black", size=3
+    ).encode(x="pos:Q")
+
+    label = alt.Chart(pd.DataFrame({
+        "pos": [pos],
+        "txt": [f"{score:+.2f} • {sentiment_zone(score)}"]
+    })).mark_text(dy=-10, fontWeight="bold").encode(x="pos:Q", text="txt:N")
+
+    st.altair_chart((base + needle + label).properties(width=520), use_container_width=False)
 
 # -----------------------
 # Run
@@ -300,6 +356,8 @@ if run:
         st.stop()
 
     idx_val, counts_tbl = compute_index(df, labels)
+    st.subheader("Sentiment Index (−1..+1)")
+    show_sentiment_meter(idx_val)
 
     # Topline
     topline = pd.DataFrame([
@@ -309,17 +367,19 @@ if run:
         ["Sentiment Index (-1..+1)", round(idx_val, 3)],
     ], columns=["Metric","Value"])
 
-    c1, c2 = st.columns([1,1])
-    with c1:
-        st.subheader("Topline")
-        st.dataframe(topline, use_container_width=True)
-        st.subheader("Category counts (1-last)")
-        st.dataframe(counts_tbl, use_container_width=True)
-    with c2:
-        prev = df.drop(columns=["VideoId"], errors="ignore").copy()
-        prev.insert(0, "No.", range(1, len(prev)+1))
-        st.subheader("Labeled Videos")
-        st.dataframe(prev, use_container_width=True, height=520)
+   with c1:
+    st.subheader("Topline")
+    st.dataframe(topline, use_container_width=True, hide_index=True)
+
+    st.subheader("Category counts (1-last)")
+    st.dataframe(counts_tbl, use_container_width=True, hide_index=True)
+
+with c2:
+    prev = df.drop(columns=["VideoId"], errors="ignore").copy()
+    prev.insert(0, "No.", range(1, len(prev)+1))
+    st.subheader("Labeled Videos")
+    st.dataframe(prev, use_container_width=True, height=520, hide_index=True)
+
 
     # Downloads
     csv_buf = io.StringIO()

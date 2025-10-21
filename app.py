@@ -261,23 +261,30 @@ with st.sidebar:
     channel = st.text_input("Channel handle", value="@DataDash")
 
     now = dt.datetime.utcnow()
-    month_names = list(calendar.month_name)[1:]  # ["January", ... , "December"]
+    month_names = list(calendar.month_name)[1:]  # ["January", ..., "December"]
     month_name  = st.selectbox("Month", month_names, index=now.month - 1)
     month       = month_names.index(month_name) + 1
 
-    year = st.number_input("Year", min_value=2015, max_value=2035, value=now.year, step=1)
+    year = st.number_input(
+        "Year", min_value=2015, max_value=2035, value=now.year, step=1
+    )
 
+    # Filters videos shorter than this.
     min_minutes = st.number_input(
         "Min video minutes", min_value=1, max_value=120, value=5, step=1,
         help="Videos shorter than this are excluded."
     )
 
-    # Fixed model for this app; change the list if you want to allow others.
-    model = st.selectbox("OpenAI model", ["gpt-4o-mini"], index=0, disabled=True,
-                         help="Fixed to gpt-4o-mini for this app.")
+    # Leave fixed; change the list if you want to allow more models.
+    model = st.selectbox(
+        "OpenAI model", ["gpt-4o-mini"], index=0, disabled=True,
+        help="Fixed to gpt-4o-mini for this app."
+    )
+
     run = st.button("Run")
 
 
+# --------- Sentiment meter ----------
 def sentiment_zone(score: float) -> str:
     if score > 0.4:
         return "Greed"
@@ -287,14 +294,14 @@ def sentiment_zone(score: float) -> str:
 
 def show_sentiment_meter(score: float):
     """
-    A clean horizontal meter with red / gray / green zones and a needle.
-    Score is in [-1, +1]. Zones:
-      - [-1, 0): Fear (red)
-      - [0, 0.4]: Neutral (gray)
-      - (0.4, 1]: Greed (green)
+    Horizontal meter with red/gray/green zones and a needle.
+    Score in [-1, +1]:
+      [-1, 0)   -> Fear (red)
+      [0, 0.4]  -> Neutral (gray)
+      (0.4, 1]  -> Greed (green)
     """
-    score = max(-1.0, min(1.0, float(score)))       # clamp
-    pos   = score + 1.0                              # map [-1,1] -> [0,2]
+    score = max(-1.0, min(1.0, float(score)))   # clamp
+    pos   = score + 1.0                         # map [-1,1] -> [0,2]
 
     zones = pd.DataFrame([
         {"zone": "Fear",    "x0": 0.0, "x1": 1.0, "color": "#d62728"},
@@ -316,14 +323,18 @@ def show_sentiment_meter(score: float):
     label = alt.Chart(pd.DataFrame({
         "pos": [pos],
         "txt": [f"{score:+.2f} • {sentiment_zone(score)}"]
-    })).mark_text(dy=-10, fontWeight="bold").encode(x="pos:Q", text="txt:N")
+    })).mark_text(dy=-10, fontWeight="bold").encode(
+        x="pos:Q", text="txt:N"
+    )
 
     st.altair_chart((base + needle + label).properties(width=520), use_container_width=False)
+
 
 # -----------------------
 # Run
 # -----------------------
 if run:
+    # --- Fetch
     try:
         df = fetch_channel_videos_for_month(
             channel, YOUTUBE_KEY, int(year), int(month), int(min_minutes) * 60
@@ -338,6 +349,8 @@ if run:
 
     st.success(f"Found {len(df)} videos.")
     st.write("Classifying with ChatGPT…")
+
+    # --- Classify
     try:
         labels = classify_titles_chatgpt(
             df["Title"].astype(str).tolist(), OPENAI_KEY, model_name=model
@@ -346,21 +359,23 @@ if run:
         st.error(f"ChatGPT classification failed: {e}")
         st.stop()
 
+    # --- Sentiment index & meter
     idx_val, counts_tbl = compute_index(df, labels)
-
-    # Sentiment meter
     st.subheader("Sentiment Index (−1..+1)")
     show_sentiment_meter(idx_val)
 
-    # Topline table (no left index)
-    topline = pd.DataFrame([
-        ["Total Videos", int(len(df))],
-        ["Total Views", int(df["Views"].sum()) if len(df) else 0],
-        ["Avg Views/Video", round(float(df["Views"].mean()), 2) if len(df) else 0.0],
-        ["Sentiment Index (−1..+1)", round(idx_val, 3)],
-    ], columns=["Metric", "Value"])
+    # --- Topline table
+    topline = pd.DataFrame(
+        [
+            ["Total Videos", int(len(df))],
+            ["Total Views", int(df["Views"].sum()) if len(df) else 0],
+            ["Avg Views/Video", round(float(df["Views"].mean()), 2) if len(df) else 0.0],
+            ["Sentiment Index (−1..+1)", round(idx_val, 3)],
+        ],
+        columns=["Metric", "Value"],
+    )
 
-    # Lay out the two tables side by side
+    # --- Layout
     c1, c2 = st.columns([1, 1])
 
     with c1:
@@ -371,18 +386,21 @@ if run:
         st.dataframe(counts_tbl, use_container_width=True, hide_index=True)
 
     with c2:
+        # Build the labeled table (keep only our "No." column — index hidden)
         prev = df.drop(columns=["VideoId"], errors="ignore").copy()
         prev.insert(0, "No.", range(1, len(prev) + 1))
         st.subheader("Labeled Videos")
         st.dataframe(prev, use_container_width=True, height=520, hide_index=True)
 
-    # Downloads
+    # --- Downloads (give unique keys to avoid DuplicateWidgetID)
     csv_buf = io.StringIO()
     df.to_csv(csv_buf, index=False)
     st.download_button(
-        "Download CSV", data=csv_buf.getvalue(),
+        "Download CSV",
+        data=csv_buf.getvalue(),
         file_name=f"{channel.strip('@').lower()}_{year}-{int(month):02d}.csv",
-        mime="text/csv"
+        mime="text/csv",
+        key="dl_csv",
     )
 
     xlsx_buf = io.BytesIO()
@@ -391,19 +409,11 @@ if run:
         topline.to_excel(xw, index=False, sheet_name="Topline")
         counts_tbl.to_excel(xw, index=False, sheet_name="SentimentCounts")
     st.download_button(
-        "Download Excel", data=xlsx_buf.getvalue(),
+        "Download Excel",
+        data=xlsx_buf.getvalue(),
         file_name=f"{channel.strip('@').lower()}_{year}-{int(month):02d}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="dl_xlsx",
     )
 
-    xlsx_buf = io.BytesIO()
-    with pd.ExcelWriter(xlsx_buf, engine="openpyxl") as xw:
-        df.to_excel(xw, index=False, sheet_name="Videos")
-        topline.to_excel(xw, index=False, sheet_name="Topline")
-        counts_tbl.to_excel(xw, index=False, sheet_name="SentimentCounts")
-    st.download_button("Download Excel", data=xlsx_buf.getvalue(), file_name=f"{channel.strip('@').lower()}_{year}-{int(month):02d}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-if st.sidebar.button("Clear cache (dev)"):
-    st.cache_data.clear()
-    st.rerun()
 

@@ -7,6 +7,7 @@ import streamlit as st
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from openai import OpenAI
+client = OpenAI(api_key=OPENAI_KEY)  # no proxies arg
 
 # -----------------------
 # Page setup

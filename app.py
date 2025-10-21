@@ -29,7 +29,7 @@ client = OpenAI(api_key=OPENAI_KEY)
 # -----------------------
 st.set_page_config(page_title="YouTube Sentiment  (GPT)", layout="wide")
 
-st.title("YouTube Sentiment Index ")
+st.title("YouTube Fear&Greed Index ")
 
 st.markdown(
     

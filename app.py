@@ -2,40 +2,26 @@ import streamlit as st
 from openai import OpenAI
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-import pandas as pd, datetime as dt, isodate
+
+import pandas as pd
+import datetime as dt
+import isodate
 import calendar, io, json, math, re
 import altair as alt
-
-# NEW: add these
-import re, json, math, io
 from typing import List, Tuple
 
-# ---- load secrets FIRST ----
+# ---- load secrets ONCE ----
 OPENAI_KEY  = st.secrets.get("openai", {}).get("api_key", "")
 YOUTUBE_KEY = st.secrets.get("google", {}).get("youtube_api_key", "")
 
-# helpful diagnostics in the UI header (optional)
 if not OPENAI_KEY:
     st.warning("Missing OpenAI key in Settings → Secrets. Expected:\n[openai]\napi_key = \"...\"")
 if not YOUTUBE_KEY:
     st.warning("Missing YouTube key in Settings → Secrets. Expected:\n[google]\nyoutube_api_key = \"...\"")
 
-# ---- NOW create the OpenAI client (no proxies arg) ----
+# OpenAI client
 client = OpenAI(api_key=OPENAI_KEY)
 
-
-# ---- load secrets FIRST ----
-OPENAI_KEY  = st.secrets.get("openai", {}).get("api_key", "")
-YOUTUBE_KEY = st.secrets.get("google", {}).get("youtube_api_key", "")
-
-# helpful diagnostics in the UI header (optional)
-if not OPENAI_KEY:
-    st.warning("Missing OpenAI key in Settings → Secrets. Expected:\n[openai]\napi_key = \"...\"")
-if not YOUTUBE_KEY:
-    st.warning("Missing YouTube key in Settings → Secrets. Expected:\n[google]\nyoutube_api_key = \"...\"")
-
-# ---- NOW create the OpenAI client (no proxies arg) ----
-client = OpenAI(api_key=OPENAI_KEY)
 
 
 # -----------------------
@@ -279,17 +265,18 @@ with st.sidebar:
     month_name  = st.selectbox("Month", month_names, index=now.month - 1)
     month       = month_names.index(month_name) + 1
 
-    year        = st.number_input("Year", min_value=2015, max_value=2035,
-                                  value=now.year, step=1)
+    year = st.number_input("Year", min_value=2015, max_value=2035, value=now.year, step=1)
 
-    # This *does* work — we filter anything shorter than this.
-    min_minutes = st.number_input("Min video minutes", min_value=1, max_value=120,
-                                  value=5, step=1, help="Videos shorter than this are excluded.")
+    min_minutes = st.number_input(
+        "Min video minutes", min_value=1, max_value=120, value=5, step=1,
+        help="Videos shorter than this are excluded."
+    )
 
-    # Keep the model fixed for stability; you can change it by editing the list.
+    # Fixed model for this app; change the list if you want to allow others.
     model = st.selectbox("OpenAI model", ["gpt-4o-mini"], index=0, disabled=True,
                          help="Fixed to gpt-4o-mini for this app.")
     run = st.button("Run")
+
 
 def sentiment_zone(score: float) -> str:
     if score > 0.4:
@@ -338,7 +325,9 @@ def show_sentiment_meter(score: float):
 # -----------------------
 if run:
     try:
-        df = fetch_channel_videos_for_month(channel, YOUTUBE_KEY, int(year), int(month), int(min_minutes)*60)
+        df = fetch_channel_videos_for_month(
+            channel, YOUTUBE_KEY, int(year), int(month), int(min_minutes) * 60
+        )
     except Exception as e:
         st.error(f"YouTube fetch failed: {e}")
         st.stop()
@@ -350,41 +339,62 @@ if run:
     st.success(f"Found {len(df)} videos.")
     st.write("Classifying with ChatGPT…")
     try:
-        labels = classify_titles_chatgpt(df["Title"].astype(str).tolist(), OPENAI_KEY, model_name=model)
+        labels = classify_titles_chatgpt(
+            df["Title"].astype(str).tolist(), OPENAI_KEY, model_name=model
+        )
     except Exception as e:
         st.error(f"ChatGPT classification failed: {e}")
         st.stop()
 
     idx_val, counts_tbl = compute_index(df, labels)
+
+    # Sentiment meter
     st.subheader("Sentiment Index (−1..+1)")
     show_sentiment_meter(idx_val)
 
-    # Topline
+    # Topline table (no left index)
     topline = pd.DataFrame([
         ["Total Videos", int(len(df))],
         ["Total Views", int(df["Views"].sum()) if len(df) else 0],
         ["Avg Views/Video", round(float(df["Views"].mean()), 2) if len(df) else 0.0],
-        ["Sentiment Index (-1..+1)", round(idx_val, 3)],
-    ], columns=["Metric","Value"])
+        ["Sentiment Index (−1..+1)", round(idx_val, 3)],
+    ], columns=["Metric", "Value"])
 
-   with c1:
-    st.subheader("Topline")
-    st.dataframe(topline, use_container_width=True, hide_index=True)
+    # Lay out the two tables side by side
+    c1, c2 = st.columns([1, 1])
 
-    st.subheader("Category counts (1-last)")
-    st.dataframe(counts_tbl, use_container_width=True, hide_index=True)
+    with c1:
+        st.subheader("Topline")
+        st.dataframe(topline, use_container_width=True, hide_index=True)
 
-with c2:
-    prev = df.drop(columns=["VideoId"], errors="ignore").copy()
-    prev.insert(0, "No.", range(1, len(prev)+1))
-    st.subheader("Labeled Videos")
-    st.dataframe(prev, use_container_width=True, height=520, hide_index=True)
+        st.subheader("Category counts (1-last)")
+        st.dataframe(counts_tbl, use_container_width=True, hide_index=True)
 
+    with c2:
+        prev = df.drop(columns=["VideoId"], errors="ignore").copy()
+        prev.insert(0, "No.", range(1, len(prev) + 1))
+        st.subheader("Labeled Videos")
+        st.dataframe(prev, use_container_width=True, height=520, hide_index=True)
 
     # Downloads
     csv_buf = io.StringIO()
     df.to_csv(csv_buf, index=False)
-    st.download_button("Download CSV", data=csv_buf.getvalue(), file_name=f"{channel.strip('@').lower()}_{year}-{int(month):02d}.csv", mime="text/csv")
+    st.download_button(
+        "Download CSV", data=csv_buf.getvalue(),
+        file_name=f"{channel.strip('@').lower()}_{year}-{int(month):02d}.csv",
+        mime="text/csv"
+    )
+
+    xlsx_buf = io.BytesIO()
+    with pd.ExcelWriter(xlsx_buf, engine="openpyxl") as xw:
+        df.to_excel(xw, index=False, sheet_name="Videos")
+        topline.to_excel(xw, index=False, sheet_name="Topline")
+        counts_tbl.to_excel(xw, index=False, sheet_name="SentimentCounts")
+    st.download_button(
+        "Download Excel", data=xlsx_buf.getvalue(),
+        file_name=f"{channel.strip('@').lower()}_{year}-{int(month):02d}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
     xlsx_buf = io.BytesIO()
     with pd.ExcelWriter(xlsx_buf, engine="openpyxl") as xw:
@@ -392,3 +402,8 @@ with c2:
         topline.to_excel(xw, index=False, sheet_name="Topline")
         counts_tbl.to_excel(xw, index=False, sheet_name="SentimentCounts")
     st.download_button("Download Excel", data=xlsx_buf.getvalue(), file_name=f"{channel.strip('@').lower()}_{year}-{int(month):02d}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+if st.sidebar.button("Clear cache (dev)"):
+    st.cache_data.clear()
+    st.rerun()
+

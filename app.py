@@ -1,12 +1,22 @@
-import io, json, math, re, datetime as dt
-from typing import List, Tuple
-import numpy as np
-import pandas as pd
-import isodate
 import streamlit as st
+from openai import OpenAI
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from openai import OpenAI
+import pandas as pd, datetime as dt, isodate
+
+# ---- load secrets FIRST ----
+OPENAI_KEY  = st.secrets.get("openai", {}).get("api_key", "")
+YOUTUBE_KEY = st.secrets.get("google", {}).get("youtube_api_key", "")
+
+# helpful diagnostics in the UI header (optional)
+if not OPENAI_KEY:
+    st.warning("Missing OpenAI key in Settings → Secrets. Expected:\n[openai]\napi_key = \"...\"")
+if not YOUTUBE_KEY:
+    st.warning("Missing YouTube key in Settings → Secrets. Expected:\n[google]\nyoutube_api_key = \"...\"")
+
+# ---- NOW create the OpenAI client (no proxies arg) ----
+client = OpenAI(api_key=OPENAI_KEY)
+
 
 # -----------------------
 # Page setup

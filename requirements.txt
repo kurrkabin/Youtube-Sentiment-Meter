@@ -4,7 +4,7 @@ numpy==1.26.4
 isodate==0.6.1
 openpyxl==3.1.5
 
-# Google API client (with compat pins that avoid build hangs)
+# Google API client (avoid protobuf issues)
 google-api-python-client==2.141.0
 google-auth-httplib2==0.2.0
 protobuf<4

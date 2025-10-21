@@ -33,8 +33,8 @@ st.title("YouTube Sentiment Index ")
 
 st.markdown(
     
-    "Type a channel (e.g., `@DataDash`), pick a month, and get a sentiment index (−1..+1) "
-    "based on video **titles** classified with GPT."
+    "Select a channel (e.g., `@DataDash`), pick a month and find the Greed&Fear Index for that Month"
+    "based on video **titles** classified with the help of AI"
 )
 
 

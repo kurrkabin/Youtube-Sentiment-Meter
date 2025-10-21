@@ -359,10 +359,53 @@ if run:
         st.error(f"ChatGPT classification failed: {e}")
         st.stop()
 
-    # --- Sentiment index & meter
-    idx_val, counts_tbl = compute_index(df, labels)
-    st.subheader("Sentiment Index (−1..+1)")
-    show_sentiment_meter(idx_val)
+def show_sentiment_meter(score: float):
+    """
+    Horizontal meter with red/gray/green zones and a needle.
+    [-1, 0)   -> Fear (red)
+    [0, 0.4]  -> Neutral (gray)
+    (0.4, 1]  -> Greed (green)
+    """
+    score = max(-1.0, min(1.0, float(score)))   # clamp to [-1, 1]
+    pos   = score + 1.0                         # map [-1,1] -> [0,2]
+
+    zones = pd.DataFrame([
+        {"zone": "Fear",    "x0": 0.0, "x1": 1.0},
+        {"zone": "Neutral", "x0": 1.0, "x1": 1.4},
+        {"zone": "Greed",   "x0": 1.4, "x1": 2.0},
+    ])
+
+    color_scale = alt.Scale(
+        domain=["Fear", "Neutral", "Greed"],
+        range=["#d62728", "#9e9e9e", "#2ca02c"]
+    )
+
+    # Draw the bar explicitly (Altair v5: use constant y + explicit size/height)
+    base = alt.Chart(zones).mark_bar().encode(
+        x=alt.X("x0:Q", axis=None, scale=alt.Scale(domain=(0, 2))),
+        x2="x1:Q",
+        y=alt.value(0),
+        size=alt.value(30),
+        color=alt.Color("zone:N", scale=color_scale, legend=None),
+        tooltip=["zone:N"]
+    ).properties(height=50)
+
+    # Needle
+    needle = alt.Chart(pd.DataFrame({"pos": [pos]})).mark_rule(
+        color="black", size=3
+    ).encode(x="pos:Q")
+
+    # Label
+    label = alt.Chart(pd.DataFrame({
+        "pos": [pos],
+        "txt": [f"{score:+.2f} • {sentiment_zone(score)}"]
+    })).mark_text(dy=-12, fontWeight="bold", fontSize=14).encode(
+        x="pos:Q", text="txt:N"
+    )
+
+    chart = (base + needle + label).configure_view(strokeWidth=0)
+    st.altair_chart(chart, use_container_width=True)
+
 
     # --- Topline table
     topline = pd.DataFrame(

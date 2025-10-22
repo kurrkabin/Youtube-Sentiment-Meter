@@ -253,25 +253,22 @@ def classify_titles_chatgpt(
         chunk = titles[i:i+BATCH]
         payload = [{"index": j+i, "title": t} for j, t in enumerate(chunk)]
         user_prompt = json.dumps(payload, ensure_ascii=False)
-
         resp = client.chat.completions.create(
             model=model_name,
             temperature=temperature,
             response_format={"type":"json_object"},
             messages=[
-                {"role":"system","content":SYS},
+                {"role":"system","content": SYS},
                 *FEW_SHOT,
                 {"role":"user","content": user_prompt}
             ],
             max_tokens=800
-        )
+    )
 
-        raw = resp.choices[0].message.content or "{}"
-        try:
-            data = json.loads(raw)
-        except Exception:
-            s, e = raw.find("{"), raw.rfind("}")
-            data = json.loads(raw[s:e+1]) if s!=-1 and e!=-1 else {"items":[]}
+raw = resp.choices[0].message.content or "{}"
+data = _safe_json_loads(raw)   # <-- new robust parse
+
+
 
         by_index = {it.get("index"): it for it in (data.get("items") or [])}
         for j, _ in enumerate(chunk):

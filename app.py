@@ -365,7 +365,7 @@ if run:
 
     # --- Sentiment index & meter
     idx_val, counts_tbl = compute_index(df, labels)
-    st.subheader("Sentiment Index (−1..+1)")
+    st.subheader("Overall Sentiment Index")
     show_sentiment_meter(idx_val)
 
     # --- Topline table

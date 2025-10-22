@@ -9,6 +9,42 @@ import isodate
 import calendar, io, json, math, re
 import altair as alt
 from typing import List, Tuple
+# ---- tolerant JSON repair/parse for model replies ----
+import re, json
+
+def _safe_json_loads(raw: str) -> dict:
+    """Parse 'almost JSON' from the model by fixing common issues."""
+    if not raw:
+        return {}
+    s = raw.strip()
+
+    # remove ```json fences
+    if s.startswith("```"):
+        s = re.sub(r"^```(?:json)?\s*|\s*```$", "", s,
+                   flags=re.IGNORECASE | re.DOTALL).strip()
+
+    # try direct parse
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+
+    # extract largest {...} block
+    l, r = s.find("{"), s.rfind("}")
+    if l != -1 and r != -1 and r > l:
+        s = s[l:r+1]
+
+    # fix .85 -> 0.85
+    s = re.sub(r'(:\s*)\.(\d+)', r'\g<1>0.\2', s)
+    s = re.sub(r'(\[|\{)\s*\.(\d+)', r'\g<1>0.\2', s)
+
+    # remove trailing commas before } or ]
+    s = re.sub(r',(\s*[}\]])', r'\1', s)
+
+    try:
+        return json.loads(s)
+    except Exception:
+        return {}
 
 # =========================
 # Secrets / Clients

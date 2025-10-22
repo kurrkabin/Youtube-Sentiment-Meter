@@ -382,6 +382,30 @@ def show_sentiment_meter(score: float):
 
     st.altair_chart((base + needle + label).properties(width=520), use_container_width=False)
 
+def render_big_score(score: float):
+    # label + color by your rules
+    if score > 0.4:
+        label, color = "Greed", "#2ca02c"    # green
+    elif score < 0.0:
+        label, color = "Fear", "#d62728"     # red
+    else:
+        label, color = "Neutral", "#111111"  # black
+
+    st.markdown(
+        f"""
+        <div style="
+            font-size:64px;
+            font-weight:800;
+            color:{color};
+            line-height:1.05;
+            margin: 4px 0 12px 0;
+        ">
+            {score:+.2f} • {label}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 # =========================
 # Run
 # =========================

@@ -329,6 +329,13 @@ def show_sentiment_meter(score: float):
     )
 
     st.altair_chart((base + needle + label).properties(width=520), use_container_width=False)
+model = st.selectbox(
+    "OpenAI model",
+    ["gpt-4o-mini", "gpt-4o"],
+    index=0,
+    help="mini = cheap/fast | 4o = smarter but pricier"
+)
+temperature = 0  # fixed for consistent outputs
 
 
 # -----------------------
@@ -353,9 +360,12 @@ if run:
 
     # --- Classify
     try:
+
         labels = classify_titles_chatgpt(
-            df["Title"].astype(str).tolist(), OPENAI_KEY, model_name=model
+            df["Title"].astype(str).tolist(), OPENAI_KEY, model_name=model,
+            temperature=temperature
         )
+
     except Exception as e:
         st.error(f"ChatGPT classification failed: {e}")
         st.stop()

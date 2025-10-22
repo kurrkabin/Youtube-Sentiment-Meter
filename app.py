@@ -475,7 +475,8 @@ if run:
     # --- Overall index & meter
     idx_val, counts_tbl = compute_index(df, labels)
     st.subheader("Overall Sentiment Index Score")
-    render_overall_score(idx_overall)
+    render_overall_score(idx_val)
+
 
 
     # --- Monthly breakdown (counts)

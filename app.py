@@ -200,6 +200,12 @@ def _safe_json_loads(raw: str) -> dict:
         return json.loads(s)
     except Exception:
         return {}
+        raw = resp.choices[0].message.content or "{}"
+        # Old:
+        # data = json.loads(raw)  # <-- this is what blew up
+
+        # New, robust:
+        data = _safe_json_loads(raw)
 
 
 # =========================

@@ -518,30 +518,30 @@ if run:
         st.subheader("Monthly breakdown (counts)")
         st.dataframe(monthly_counts, use_container_width=True, hide_index=True)
     with c2:
-    st.subheader("Monthly Sentiment Index (line)")
+        st.subheader("Monthly Sentiment Index (line)")
 
-    # count distinct months in the selected range
-    n_months = monthly_index["YearMonth"].nunique()
+        # count distinct months in the selected range
+        n_months = monthly_index["YearMonth"].nunique()
 
-    if n_months > 1:
-        line = (
-            alt.Chart(monthly_index)
-            .mark_line(point=True)
-            .encode(
-                x=alt.X("YearMonth:N", sort=None, title="Month"),
-                y=alt.Y("SentimentScore:Q", scale=alt.Scale(domain=[-1, 1]), title="Index (-1..+1)"),
-                tooltip=["YearMonth:N", "SentimentScore:Q"],
-            )
-            .properties(height=320)
+        if n_months > 1:
+            line = (
+                alt.Chart(monthly_index)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X("YearMonth:N", sort=None, title="Month"),
+                    y=alt.Y("SentimentScore:Q", scale=alt.Scale(domain=[-1, 1]), title="Index (-1..+1)"),
+                    tooltip=["YearMonth:N", "SentimentScore:Q"],
+                )
+                .properties(height=320)
         )
         st.altair_chart(line, use_container_width=True)
-    else:
-        st.caption("Monthly line chart hidden (only one month in range).")
+        else:
+            st.caption("Monthly line chart hidden (only one month in range).")
 
-    st.subheader("Labeled Videos")
-    prev = df.drop(columns=["VideoId"], errors="ignore").copy()
-    prev.insert(0, "No.", range(1, len(prev) + 1))
-    st.dataframe(prev, use_container_width=True, height=520, hide_index=True)
+        st.subheader("Labeled Videos")
+        prev = df.drop(columns=["VideoId"], errors="ignore").copy()
+        prev.insert(0, "No.", range(1, len(prev) + 1))
+        st.dataframe(prev, use_container_width=True, height=520, hide_index=True)
 
    
 

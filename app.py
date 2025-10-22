@@ -156,113 +156,51 @@ def fetch_range_for_months(channel: str, api_key: str, start_y: int, start_m: in
 # =========================
 # Classifier (model-only)
 # =========================
-def classify_titles_chatgpt(
-    titles: List[str],
-    api_key: str,
-    model_name: str = "gpt-4o-mini",
-    temperature: float = 0.0,
-    neutral_floor: float = 0.55,   # if top score < this → Neutral
-    margin_floor: float = 0.10     # if (top - second) < this → Neutral
-):
+import re, json
+
+def _safe_json_loads(raw: str) -> dict:
     """
-    Returns list of labels: {'Bullish','Bearish','Neutral'} using *only* model reasoning.
-    Light guardrails: if low confidence or too close → Neutral.
+    Best-effort JSON parser for model replies.
+    - Strips ```json fences if present
+    - Extracts the innermost {...} block
+    - Fixes a few common issues:
+        * numbers like `.85` -> `0.85`
+        * trailing commas before } or ]
+    Returns {} on failure.
     """
-    if not api_key:
-        raise RuntimeError("Missing OpenAI API key in secrets.")
+    if not raw:
+        return {}
 
-    client = OpenAI(api_key=api_key)
+    s = raw.strip()
 
-    SYS = (
-        "You are a STRICT sentiment classifier for crypto/finance video titles.\n"
-        "Assign exactly one label: Bullish, Bearish, or Neutral.\n\n"
-        "Definitions:\n"
-        "- Bullish: clear up-move language or upside expectation.\n"
-        "- Bearish: clear down-move language or downside expectation.\n"
-        "- Neutral: tutorials, ads, generic news, or mixed/hedged titles (e.g., 'X soars but Y crashes').\n\n"
-        "Rules:\n"
-        "1) Mixed/opposing signals → Neutral.\n"
-        "2) Question marks / 'might/could' → Neutral unless clearly one-sided.\n"
-        "3) Clickbait adjectives/emojis do not decide direction.\n\n"
-        "Output JSON ONLY:\n"
-        "{\"items\":[{\"index\":0, \"label\":\"Bullish|Bearish|Neutral\", "
-        "\"scores\":{\"Bullish\":0.0,\"Bearish\":0.0,\"Neutral\":0.0}}]}\n"
-        "Scores should sum ~1; avoid 1.00 unless truly certain."
-    )
+    # Remove code fences ```json ... ```
+    if s.startswith("```"):
+        s = re.sub(r"^```(?:json)?\s*|\s*```$", "", s, flags=re.IGNORECASE|re.DOTALL).strip()
 
-    FEW_SHOT = [
-        {
-            "role":"user",
-            "content": json.dumps([
-                {"index":0,"title":"Bitcoin soars but altcoins crash hard"},
-                {"index":1,"title":"Is this the final Bitcoin top?"},
-                {"index":2,"title":"Ethereum down 12% after liquidation cascade"}
-            ], ensure_ascii=False)
-        },
-        {
-            "role":"assistant",
-            "content": json.dumps({
-                "items":[
-                    {"index":0,"label":"Neutral","scores":{"Bullish":0.35,"Bearish":0.35,"Neutral":0.30}},
-                    {"index":1,"label":"Neutral","scores":{"Bullish":0.30,"Bearish":0.25,"Neutral":0.45}},
-                    {"index":2,"label":"Bearish","scores":{"Bullish":0.05,"Bearish":0.85,"Neutral":0.10}}
-                ]
-            })
-        }
-    ]
+    # Try direct parse first
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
 
-    out_labels = []
-    BATCH = 20
-    for i in range(0, len(titles), BATCH):
-        chunk = titles[i:i+BATCH]
-        payload = [{"index": j+i, "title": t} for j, t in enumerate(chunk)]
-        user_prompt = json.dumps(payload, ensure_ascii=False)
+    # Extract the largest {...} block
+    l, r = s.find("{"), s.rfind("}")
+    if l != -1 and r != -1 and r > l:
+        s = s[l:r+1]
 
-        resp = client.chat.completions.create(
-            model=model_name,
-            temperature=temperature,
-            response_format={"type":"json_object"},
-            messages=[
-                {"role":"system","content":SYS},
-                *FEW_SHOT,
-                {"role":"user","content": user_prompt}
-            ],
-            max_tokens=800
-        )
+    # Fix .85 -> 0.85 after a colon or start
+    s = re.sub(r'(:\s*)\.(\d+)', r'\g<1>0.\2', s)
+    s = re.sub(r'(\[|\{)\s*\.(\d+)', r'\g<1>0.\2', s)
 
-        raw = resp.choices[0].message.content or "{}"
-        try:
-            data = json.loads(raw)
-        except Exception:
-            s, e = raw.find("{"), raw.rfind("}")
-            data = json.loads(raw[s:e+1]) if s!=-1 and e!=-1 else {"items":[]}
+    # Remove trailing commas before } or ]
+    s = re.sub(r',(\s*[}\]])', r'\1', s)
 
-        by_index = {it.get("index"): it for it in (data.get("items") or [])}
-        for j, _ in enumerate(chunk):
-            item = by_index.get(j+i, {})
-            scrs = (item.get("scores") or {})
-            b = float(scrs.get("Bullish", 0.0))
-            d = float(scrs.get("Bearish", 0.0))
-            n = float(scrs.get("Neutral", 0.0))
+    # Final attempt
+    try:
+        return json.loads(s)
+    except Exception:
+        return {}
 
-            if (b + d + n) <= 0:
-                out_labels.append(item.get("label") or "Neutral")
-                continue
-
-            scores = {"Bullish": b, "Bearish": d, "Neutral": n}
-            top_label = max(scores, key=scores.get)
-            top = scores[top_label]
-            second = max(v for k,v in scores.items() if k != top_label)
-
-            if top < neutral_floor or (top - second) < margin_floor:
-                out_labels.append("Neutral")
-            else:
-                out_labels.append(top_label)
-
-    if len(out_labels) != len(titles):
-        out_labels += ["Neutral"] * (len(titles) - len(out_labels))
-
-    return out_labels
 
 # =========================
 # Compute index

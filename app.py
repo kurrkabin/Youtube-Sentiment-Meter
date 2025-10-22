@@ -351,6 +351,26 @@ def sentiment_zone(score: float) -> str:
     if score < 0.0:
         return "Fear"
     return "Neutral"
+def render_overall_score(score: float):
+    """
+    Big, color-coded overall score. 
+    Greed (> 0.40) = green, Fear (< 0) = red, otherwise black Neutral.
+    """
+    label = sentiment_zone(score)
+    color = "#2ca02c" if score > 0.40 else ("#d62728" if score < 0 else "#111111")
+    st.markdown(
+        f"""
+        <div style="
+            font-size: 56px;
+            font-weight: 800;
+            line-height: 1.05;
+            letter-spacing: -0.5px;
+            margin: 8px 0 18px 0;
+            color: {color};
+        ">{score:+.2f} • {label}</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 def show_sentiment_meter(score: float):
     score = max(-1.0, min(1.0, float(score)))   # clamp

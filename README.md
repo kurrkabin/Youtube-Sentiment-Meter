@@ -23,9 +23,3 @@ Think of it as a little sentiment meter for the crypto crowd — or anyone who w
 
 ---
 
-## ⚙️ Setup
-
-1. **Clone the repo**
-   ```bash
-   git clone https://github.com/yourusername/youtube-fear-greed.git
-   cd youtube-fear-greed

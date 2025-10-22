@@ -197,13 +197,9 @@ def classify_titles_chatgpt(
     api_key: str,
     model_name: str = "gpt-4o-mini",
     temperature: float = 0.0,
-    neutral_floor: float = 0.55,   # if top score < this → Neutral
-    margin_floor: float = 0.10     # if (top - second) < this → Neutral
+    neutral_floor: float = 0.55,
+    margin_floor: float = 0.10
 ):
-    """
-    Returns list of labels: {'Bullish','Bearish','Neutral'} using *only* model reasoning.
-    Light guardrails: if low confidence or too close → Neutral.
-    """
     if not api_key:
         raise RuntimeError("Missing OpenAI API key in secrets.")
 
@@ -222,8 +218,7 @@ def classify_titles_chatgpt(
         "3) Clickbait adjectives/emojis do not decide direction.\n\n"
         "Output JSON ONLY:\n"
         "{\"items\":[{\"index\":0, \"label\":\"Bullish|Bearish|Neutral\", "
-        "\"scores\":{\"Bullish\":0.0,\"Bearish\":0.0,\"Neutral\":0.0}}]}\n"
-        "Scores should sum ~1; avoid 1.00 unless truly certain."
+        "\"scores\":{\"Bullish\":0.0,\"Bearish\":0.0,\"Neutral\":0.0}}]}"
     )
 
     FEW_SHOT = [
@@ -253,6 +248,7 @@ def classify_titles_chatgpt(
         chunk = titles[i:i+BATCH]
         payload = [{"index": j+i, "title": t} for j, t in enumerate(chunk)]
         user_prompt = json.dumps(payload, ensure_ascii=False)
+
         resp = client.chat.completions.create(
             model=model_name,
             temperature=temperature,
@@ -263,10 +259,10 @@ def classify_titles_chatgpt(
                 {"role":"user","content": user_prompt}
             ],
             max_tokens=800
-    )
+        )
 
-raw = resp.choices[0].message.content or "{}"
-data = _safe_json_loads(raw)   # <-- new robust parse
+        raw = resp.choices[0].message.content or "{}"
+        data = _safe_json_loads(raw)  # <--- robust parse
 
         by_index = {it.get("index"): it for it in (data.get("items") or [])}
         for j, _ in enumerate(chunk):
@@ -283,7 +279,7 @@ data = _safe_json_loads(raw)   # <-- new robust parse
             scores = {"Bullish": b, "Bearish": d, "Neutral": n}
             top_label = max(scores, key=scores.get)
             top = scores[top_label]
-            second = max(v for k,v in scores.items() if k != top_label)
+            second = max(v for k, v in scores.items() if k != top_label)
 
             if top < neutral_floor or (top - second) < margin_floor:
                 out_labels.append("Neutral")
@@ -294,6 +290,7 @@ data = _safe_json_loads(raw)   # <-- new robust parse
         out_labels += ["Neutral"] * (len(titles) - len(out_labels))
 
     return out_labels
+
 
 # =========================
 # Compute index

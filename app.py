@@ -351,7 +351,33 @@ def show_sentiment_meter(score: float):
     )
 
     st.altair_chart((base + needle + label).properties(width=520), use_container_width=False)
+ def _zone_color(zone: str) -> str:
+    # Tailwind-ish colors
+    return {
+        "Greed":  "#16a34a",  # green-600
+        "Fear":   "#dc2626",  # red-600
+        "Neutral":"#111827",  # gray-900 (near black)
+    }.get(zone, "#111827")
 
+def render_overall_index_badge(score: float):
+    zone = sentiment_zone(score)                      # Greed / Fear / Neutral
+    color = _zone_color(zone)
+    sign  = "+" if score >= 0 else ""
+    label = f"{sign}{score:.2f} · {zone}"
+    st.markdown(
+        f"""
+        <div style="
+            font-size: 44px;
+            font-weight: 800;
+            color: {color};
+            margin: 2px 0 12px 0;
+            line-height: 1.05;">
+            {label}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+   
 # =========================
 # Run
 # =========================
@@ -397,7 +423,7 @@ if run:
 
     # --- Overall index & meter
     idx_val, counts_tbl = compute_index(df, labels)
-    st.subheader("Overall Sentiment Index (−1..+1) for Selected Range")
+    st.subheader("Overall Sentiment Index")
     show_sentiment_meter(idx_val)
 
     # --- Monthly breakdown (counts)

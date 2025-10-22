@@ -22,22 +22,17 @@ if not YOUTUBE_KEY:
 # OpenAI client
 client = OpenAI(api_key=OPENAI_KEY)
 
-
-
 # -----------------------
 # Page setup
 # -----------------------
-st.set_page_config(page_title="YouTube Sentiment  (GPT)", layout="wide")
+st.set_page_config(page_title="YouTube Sentiment (GPT)", layout="wide")
 
-st.title("YouTube Fear&Greed Index ")
+st.title("YouTube Fear & Greed Index")
 
 st.markdown(
-    
-    "Select a channel (e.g., `@DataDash`), pick a month and find the Greed&Fear Index for that Month" 
-    " based on video **titles** classified with the help of AI"
+    "Select a channel (e.g., `@DataDash`), pick a month, and get the **Fear & Greed Index** "
+    "for that month based on video **titles** classified with AI."
 )
-
-
 
 # -----------------------
 # Helpers
@@ -75,6 +70,7 @@ def fetch_channel_videos_for_month(channel_handle: str, api_key: str, year: int,
 
     start, end = month_range(year, month)
     raw, token = [], None
+
     while True:
         res = yt.playlistItems().list(
             part="snippet,contentDetails",
@@ -135,63 +131,119 @@ def fetch_channel_videos_for_month(channel_handle: str, api_key: str, year: int,
     return df
 
 # -----------------------
-# GPT classification (prompt + few-shot + keyword backstop)
+# Model-only classifier (no keyword overrides)
 # -----------------------
-OPENAI_JSON_INSTRUCTIONS = (
-    "You are a STRICT market-sentiment classifier for crypto/finance video titles.\n"
-    "Output exactly ONE label per title in {Bullish, Bearish, Neutral}.\n"
-    "Definitions:\n"
-    "- Bullish: clear upside phrasing (surge, rally, pump, breakout, soar, moon, ATH, rip, rebound, bounce back).\n"
-    "- Bearish: clear downside phrasing (drop, dump, crash, plunge, liquidation, breakdown, rejection, danger, warning, damage).\n"
-    "- Neutral: tutorials/news/sponsors or hedged questions with NO clear directional bias.\n"
-    "Edge rules:\n"
-    "- Strong down/up verbs trump question marks: 'Drops 30%?' is Bearish; 'Short squeeze incoming?' is Bullish.\n"
-    "- If mixed/ambiguous, choose Neutral.\n"
-    "Return ONLY JSON: {\"labels\":[{\"index\":0,\"label\":\"Bullish\"}]}\n"
-)
-FEW_SHOT = [
-    {"role": "user", "content": json.dumps([{"index":0,"title":"Crypto Damage Report"},{"index":1,"title":"Ethereum Drops 30% - Now What?"}])},
-    {"role": "assistant", "content": json.dumps({"labels":[{"index":0,"label":"Bearish"},{"index":1,"label":"Bearish"}]})},
-    {"role": "user", "content": json.dumps([{"index":0,"title":"Bitcoin Bounces Back After Friday’s Dump | What This Means"},{"index":1,"title":"Is the Top In for Bitcoin?"}])},
-    {"role": "assistant", "content": json.dumps({"labels":[{"index":0,"label":"Bullish"},{"index":1,"label":"Neutral"}]})},
-]
+def classify_titles_chatgpt(
+    titles: List[str],
+    api_key: str,
+    model_name: str = "gpt-4o-mini",
+    temperature: float = 0.0,
+    neutral_floor: float = 0.55,   # if top score < this → Neutral
+    margin_floor: float = 0.10     # if (top - second) < this → Neutral
+):
+    """
+    Returns list of labels in {'Bullish','Bearish','Neutral'} using model-only reasoning.
+    Light guardrails: if low confidence or too close → Neutral.
+    """
+    if not api_key:
+        raise RuntimeError("Missing OpenAI API key in secrets.")
 
-_BULL_KWS = set([
-    "surge","surges","soar","soars","rally","rallies","pump","pumps","moon","breakout","spike","spikes",
-    "ath","new high","record high","rip","rips","rebound","rebounds","bounce","bounces","recovery","recover",
-    "short squeeze","squeeze incoming","wrecked","wrong about this rally","supercycle","on the cusp","cusp of","ready to run","set to run","altseason","altcoin season"
-])
-_BEAR_KWS = set([
-    "drop","drops","dump","dumps","crash","crashes","plunge","plunges","collapse","liquidation","liquidations",
-    "rekt","bloodbath","bearish","bear market","sell-off","sell off","breakdown","rejection","danger","warning","damage","damage report","downtrend","bull trap","trap"
-])
+    client = OpenAI(api_key=api_key)
 
-def _extract_json_block(s: str):
-    if not s:
-        return {}
-    try:
-        return json.loads(s)
-    except Exception:
-        l, r = s.find("{"), s.rfind("}")
-        cand = s[l:r+1] if l>=0 and r>l else ""
+    SYS = (
+        "You are a STRICT sentiment classifier for crypto/finance video titles.\n"
+        "Assign exactly one label: Bullish, Bearish, or Neutral.\n\n"
+        "Definitions:\n"
+        "- Bullish: clear up-move language or upside expectation.\n"
+        "- Bearish: clear down-move language or downside expectation.\n"
+        "- Neutral: tutorials, ads, generic news, or mixed/hedged titles (e.g., 'X soars but Y crashes').\n\n"
+        "Rules:\n"
+        "1) Mixed/opposing signals → Neutral.\n"
+        "2) Question marks / 'might/could' → Neutral unless clearly one-sided.\n"
+        "3) Clickbait adjectives/emojis do not decide direction.\n\n"
+        "Output JSON ONLY:\n"
+        "{\"items\":[{\"index\":0, \"label\":\"Bullish|Bearish|Neutral\", "
+        "\"scores\":{\"Bullish\":0.0,\"Bearish\":0.0,\"Neutral\":0.0}}]}\n"
+        "Scores should sum ~1; avoid 1.00 unless truly certain."
+    )
+
+    FEW_SHOT = [
+        {
+            "role":"user",
+            "content": json.dumps([
+                {"index":0,"title":"Bitcoin soars but altcoins crash hard"},
+                {"index":1,"title":"Is this the final Bitcoin top?"},
+                {"index":2,"title":"Ethereum down 12% after liquidation cascade"}
+            ], ensure_ascii=False)
+        },
+        {
+            "role":"assistant",
+            "content": json.dumps({
+                "items":[
+                    {"index":0,"label":"Neutral","scores":{"Bullish":0.35,"Bearish":0.35,"Neutral":0.30}},
+                    {"index":1,"label":"Neutral","scores":{"Bullish":0.30,"Bearish":0.25,"Neutral":0.45}},
+                    {"index":2,"label":"Bearish","scores":{"Bullish":0.05,"Bearish":0.85,"Neutral":0.10}}
+                ]
+            })
+        }
+    ]
+
+    out_labels = []
+    BATCH = 20
+    for i in range(0, len(titles), BATCH):
+        chunk = titles[i:i+BATCH]
+        payload = [{"index": j+i, "title": t} for j, t in enumerate(chunk)]
+        user_prompt = json.dumps(payload, ensure_ascii=False)
+
+        resp = client.chat.completions.create(
+            model=model_name,
+            temperature=temperature,
+            response_format={"type":"json_object"},
+            messages=[
+                {"role":"system","content":SYS},
+                *FEW_SHOT,
+                {"role":"user","content": user_prompt}
+            ],
+            max_tokens=800
+        )
+
+        raw = resp.choices[0].message.content or "{}"
         try:
-            return json.loads(cand) if cand else {}
+            data = json.loads(raw)
         except Exception:
-            return {}
+            s, e = raw.find("{"), raw.rfind("}")
+            data = json.loads(raw[s:e+1]) if s!=-1 and e!=-1 else {"items":[]}
 
-def _kw_override(title: str, model_label: str) -> str:
-    t = title.lower()
-    bull = any(k in t for k in _BULL_KWS)
-    bear = any(k in t for k in _BEAR_KWS)
-    if bear and not bull:
-        return "Bearish"
-    if bull and not bear:
-        return "Bullish"
-    return model_label
+        by_index = {it.get("index"): it for it in (data.get("items") or [])}
+        for j, _ in enumerate(chunk):
+            item = by_index.get(j+i, {})
+            scrs = (item.get("scores") or {})
+            b = float(scrs.get("Bullish", 0.0))
+            d = float(scrs.get("Bearish", 0.0))
+            n = float(scrs.get("Neutral", 0.0))
 
-@st.cache_data(show_spinner=True)
+            if (b + d + n) <= 0:
+                out_labels.append(item.get("label") or "Neutral")
+                continue
 
+            scores = {"Bullish": b, "Bearish": d, "Neutral": n}
+            top_label = max(scores, key=scores.get)
+            top = scores[top_label]
+            second = max(v for k,v in scores.items() if k != top_label)
 
+            if top < neutral_floor or (top - second) < margin_floor:
+                out_labels.append("Neutral")
+            else:
+                out_labels.append(top_label)
+
+    if len(out_labels) != len(titles):
+        out_labels += ["Neutral"] * (len(titles) - len(out_labels))
+
+    return out_labels
+
+# -----------------------
+# Compute index
+# -----------------------
 def compute_index(df: pd.DataFrame, labels: List[str]) -> Tuple[float, pd.DataFrame]:
     score_map = {"Bullish": 1, "Neutral": 0, "Bearish": -1}
     df["Sentiment"] = labels
@@ -224,14 +276,15 @@ with st.sidebar:
         help="Videos shorter than this are excluded."
     )
 
-    # Leave fixed; change the list if you want to allow more models.
+    # Model picker (only one)
     model = st.selectbox(
-        "OpenAI model", ["gpt-4o-mini"], index=0, disabled=True,
-        help="Fixed to gpt-4o-mini for this app."
+        "OpenAI model",
+        ["gpt-4o-mini", "gpt-4o"],
+        index=0,
+        help="mini = cheap/fast | 4o = smarter but pricier"
     )
 
     run = st.button("Run")
-
 
 # --------- Sentiment meter ----------
 def sentiment_zone(score: float) -> str:
@@ -277,14 +330,6 @@ def show_sentiment_meter(score: float):
     )
 
     st.altair_chart((base + needle + label).properties(width=520), use_container_width=False)
-model = st.selectbox(
-    "OpenAI model",
-    ["gpt-4o-mini", "gpt-4o"],
-    index=0,
-    help="mini = cheap/fast | 4o = smarter but pricier"
-)
-temperature = 0  # fixed for consistent outputs
-
 
 # -----------------------
 # Run
@@ -308,15 +353,12 @@ if run:
 
     # --- Classify
     try:
-
         labels = classify_titles_chatgpt(
             df["Title"].astype(str).tolist(),
             OPENAI_KEY,
             model_name=model,
-            temperature=0.0    
+            temperature=0.0
         )
-
-
     except Exception as e:
         st.error(f"ChatGPT classification failed: {e}")
         st.stop()
@@ -348,13 +390,12 @@ if run:
         st.dataframe(counts_tbl, use_container_width=True, hide_index=True)
 
     with c2:
-        # Build the labeled table (keep only our "No." column — index hidden)
         prev = df.drop(columns=["VideoId"], errors="ignore").copy()
         prev.insert(0, "No.", range(1, len(prev) + 1))
         st.subheader("Labeled Videos")
         st.dataframe(prev, use_container_width=True, height=520, hide_index=True)
 
-    # --- Downloads (give unique keys to avoid DuplicateWidgetID)
+    # --- Downloads (unique keys to avoid DuplicateWidgetID)
     csv_buf = io.StringIO()
     df.to_csv(csv_buf, index=False)
     st.download_button(

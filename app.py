@@ -268,8 +268,6 @@ def classify_titles_chatgpt(
 raw = resp.choices[0].message.content or "{}"
 data = _safe_json_loads(raw)   # <-- new robust parse
 
-
-
         by_index = {it.get("index"): it for it in (data.get("items") or [])}
         for j, _ in enumerate(chunk):
             item = by_index.get(j+i, {})

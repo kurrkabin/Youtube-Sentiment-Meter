@@ -534,7 +534,7 @@ if run:
                 )
                 .properties(height=320)
         )
-        st.altair_chart(line, use_container_width=True)
+            st.altair_chart(line, use_container_width=True)
         else:
             st.caption("Monthly line chart hidden (only one month in range).")
 

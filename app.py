@@ -10,9 +10,7 @@ import calendar, io, json, math, re
 import altair as alt
 from typing import List, Tuple
 
-# =========================
-# Secrets / Clients
-# =========================
+# ---- load secrets ONCE ----
 OPENAI_KEY  = st.secrets.get("openai", {}).get("api_key", "")
 YOUTUBE_KEY = st.secrets.get("google", {}).get("youtube_api_key", "")
 
@@ -21,19 +19,24 @@ if not OPENAI_KEY:
 if not YOUTUBE_KEY:
     st.warning("Missing YouTube key in Settings → Secrets. Expected:\n[google]\nyoutube_api_key = \"...\"")
 
+# OpenAI client
+client = OpenAI(api_key=OPENAI_KEY)
+
 # -----------------------
 # Page setup
 # -----------------------
 st.set_page_config(page_title="YouTube Sentiment (GPT)", layout="wide")
+
 st.title("YouTube Fear & Greed Index")
+
 st.markdown(
-    "Select a channel (e.g., `@DataDash`), pick a **start** and **end** month, "
-    "and get an overall **Fear & Greed Index** + per-month breakdown based on video **titles** classified with AI."
+    "Select a channel (e.g., `@DataDash`), pick a month, and get the **Fear & Greed Index** "
+    "for that month based on video **titles** classified with AI."
 )
 
-# =========================
+# -----------------------
 # Helpers
-# =========================
+# -----------------------
 def month_range(year: int, month: int) -> Tuple[dt.datetime, dt.datetime]:
     start = dt.datetime(year, month, 1)
     end = dt.datetime(year + 1, 1, 1) if month == 12 else dt.datetime(year, month + 1, 1)
@@ -42,18 +45,9 @@ def month_range(year: int, month: int) -> Tuple[dt.datetime, dt.datetime]:
 def _norm_title(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip()).casefold()
 
-def months_between(y1: int, m1: int, y2: int, m2: int):
-    """Yield (year, month) inclusive from (y1,m1) to (y2,m2)."""
-    a = y1 * 12 + (m1 - 1)
-    b = y2 * 12 + (m2 - 1)
-    for idx in range(a, b + 1):
-        y = idx // 12
-        m = idx % 12 + 1
-        yield y, m
-
-# =========================
+# -----------------------
 # YouTube fetch
-# =========================
+# -----------------------
 @st.cache_data(show_spinner=True)
 def fetch_channel_videos_for_month(channel_handle: str, api_key: str, year: int, month: int, min_seconds: int):
     if not api_key:
@@ -136,26 +130,9 @@ def fetch_channel_videos_for_month(channel_handle: str, api_key: str, year: int,
     df = df.drop_duplicates(subset="__norm", keep="first").drop(columns="__norm")
     return df
 
-@st.cache_data(show_spinner=True)
-def fetch_range_for_months(channel: str, api_key: str, start_y: int, start_m: int, end_y: int, end_m: int, min_seconds: int):
-    """Loop months, fetch, and concatenate. Soft-fails individual months."""
-    frames = []
-    for (yy, mm) in months_between(start_y, start_m, end_y, end_m):
-        try:
-            dfm = fetch_channel_videos_for_month(channel, api_key, yy, mm, min_seconds)
-            if not dfm.empty:
-                dfm["Year"] = yy
-                dfm["Month"] = mm
-                frames.append(dfm)
-        except Exception as e:
-            st.info(f"Skipping {yy}-{mm:02d}: {e}")
-    if not frames:
-        return pd.DataFrame(columns=["Datetime","Title","URL","VideoId","DurationSec","Views","Year","Month"])
-    return pd.concat(frames, ignore_index=True)
-
-# =========================
-# Classifier (model-only)
-# =========================
+# -----------------------
+# Model-only classifier (no keyword overrides)
+# -----------------------
 def classify_titles_chatgpt(
     titles: List[str],
     api_key: str,
@@ -165,7 +142,7 @@ def classify_titles_chatgpt(
     margin_floor: float = 0.10     # if (top - second) < this → Neutral
 ):
     """
-    Returns list of labels: {'Bullish','Bearish','Neutral'} using *only* model reasoning.
+    Returns list of labels in {'Bullish','Bearish','Neutral'} using model-only reasoning.
     Light guardrails: if low confidence or too close → Neutral.
     """
     if not api_key:
@@ -264,9 +241,9 @@ def classify_titles_chatgpt(
 
     return out_labels
 
-# =========================
+# -----------------------
 # Compute index
-# =========================
+# -----------------------
 def compute_index(df: pd.DataFrame, labels: List[str]) -> Tuple[float, pd.DataFrame]:
     score_map = {"Bullish": 1, "Neutral": 0, "Bearish": -1}
     df["Sentiment"] = labels
@@ -276,33 +253,30 @@ def compute_index(df: pd.DataFrame, labels: List[str]) -> Tuple[float, pd.DataFr
     counts_tbl = pd.DataFrame({"Category": counts.index, "Count (1-last)": counts.values})
     return idx_val, counts_tbl
 
-# =========================
-# Sidebar (range inputs)
-# =========================
+# -----------------------
+# UI
+# -----------------------
 with st.sidebar:
     st.header("Inputs")
 
     channel = st.text_input("Channel handle", value="@DataDash")
 
-    month_names = list(calendar.month_name)[1:]  # ["January", ..., "December"]
     now = dt.datetime.utcnow()
+    month_names = list(calendar.month_name)[1:]  # ["January", ..., "December"]
+    month_name  = st.selectbox("Month", month_names, index=now.month - 1)
+    month       = month_names.index(month_name) + 1
 
-    st.subheader("Start")
-    start_month_name = st.selectbox("Start month", month_names, index=max(0, now.month-1), key="start_m")
-    start_year = st.number_input("Start year", min_value=2015, max_value=2035, value=now.year, step=1, key="start_y")
+    year = st.number_input(
+        "Year", min_value=2015, max_value=2035, value=now.year, step=1
+    )
 
-    st.subheader("End")
-    end_month_name = st.selectbox("End month", month_names, index=max(0, now.month-1), key="end_m")
-    end_year = st.number_input("End year", min_value=2015, max_value=2035, value=now.year, step=1, key="end_y")
-
-    start_month = month_names.index(start_month_name) + 1
-    end_month   = month_names.index(end_month_name) + 1
-
+    # Filters videos shorter than this.
     min_minutes = st.number_input(
         "Min video minutes", min_value=1, max_value=120, value=5, step=1,
         help="Videos shorter than this are excluded."
     )
 
+    # Model picker (only one)
     model = st.selectbox(
         "OpenAI model",
         ["gpt-4o-mini", "gpt-4o"],
@@ -312,9 +286,7 @@ with st.sidebar:
 
     run = st.button("Run")
 
-# =========================
-# Sentiment meter
-# =========================
+# --------- Sentiment meter ----------
 def sentiment_zone(score: float) -> str:
     if score > 0.4:
         return "Greed"
@@ -323,6 +295,13 @@ def sentiment_zone(score: float) -> str:
     return "Neutral"
 
 def show_sentiment_meter(score: float):
+    """
+    Horizontal meter with red/gray/green zones and a needle.
+    Score in [-1, +1]:
+      [-1, 0)   -> Fear (red)
+      [0, 0.4]  -> Neutral (gray)
+      (0.4, 1]  -> Greed (green)
+    """
     score = max(-1.0, min(1.0, float(score)))   # clamp
     pos   = score + 1.0                         # map [-1,1] -> [0,2]
 
@@ -352,35 +331,24 @@ def show_sentiment_meter(score: float):
 
     st.altair_chart((base + needle + label).properties(width=520), use_container_width=False)
 
-# =========================
+# -----------------------
 # Run
-# =========================
+# -----------------------
 if run:
-    # Range validation
-    if (int(end_year), int(end_month)) < (int(start_year), int(start_month)):
-        st.error("End must be equal to or after Start.")
-        st.stop()
-
     # --- Fetch
     try:
-        df = fetch_range_for_months(
-            channel=channel,
-            api_key=YOUTUBE_KEY,
-            start_y=int(start_year),
-            start_m=int(start_month),
-            end_y=int(end_year),
-            end_m=int(end_month),
-            min_seconds=int(min_minutes) * 60,
+        df = fetch_channel_videos_for_month(
+            channel, YOUTUBE_KEY, int(year), int(month), int(min_minutes) * 60
         )
     except Exception as e:
         st.error(f"YouTube fetch failed: {e}")
         st.stop()
 
     if df.empty:
-        st.warning("No (>= min minutes) videos found in that range.")
+        st.warning("No (>= min minutes) videos found for that month.")
         st.stop()
 
-    st.success(f"Found {len(df)} videos across the selected range.")
+    st.success(f"Found {len(df)} videos.")
     st.write("Classifying with ChatGPT…")
 
     # --- Classify
@@ -395,83 +363,45 @@ if run:
         st.error(f"ChatGPT classification failed: {e}")
         st.stop()
 
-    # --- Overall index & meter
+    # --- Sentiment index & meter
     idx_val, counts_tbl = compute_index(df, labels)
-    st.subheader("Overall Sentiment Index")
+    st.subheader("Sentiment Index (−1..+1)")
     show_sentiment_meter(idx_val)
 
-    # --- Monthly breakdown (counts)
-    df["Sentiment"] = labels
-    monthly_counts = (
-        df.assign(YearMonth=df["Year"].astype(str) + "-" + df["Month"].astype(int).astype(str).str.zfill(2))
-          .groupby("YearMonth")["Sentiment"]
-          .value_counts()
-          .unstack(fill_value=0)
-          .reindex(columns=["Bullish","Bearish","Neutral"], fill_value=0)
-          .reset_index()
-          .sort_values("YearMonth")
+    # --- Topline table
+    topline = pd.DataFrame(
+        [
+            ["Total Videos", int(len(df))],
+            ["Total Views", int(df["Views"].sum()) if len(df) else 0],
+            ["Avg Views/Video", round(float(df["Views"].mean()), 2) if len(df) else 0.0],
+            ["Sentiment Index (−1..+1)", round(idx_val, 3)],
+        ],
+        columns=["Metric", "Value"],
     )
 
-    # --- Monthly index (line chart)
-    score_map = {"Bullish": 1, "Neutral": 0, "Bearish": -1}
-    df["SentimentScore"] = df["Sentiment"].map(score_map)
-    monthly_index = (
-        df.assign(YearMonth=df["Year"].astype(str) + "-" + df["Month"].astype(int).astype(str).str.zfill(2))
-          .groupby("YearMonth")["SentimentScore"]
-          .mean()
-          .reset_index()
-          .sort_values("YearMonth")
-    )
-
+    # --- Layout
     c1, c2 = st.columns([1, 1])
+
     with c1:
         st.subheader("Topline")
-        topline = pd.DataFrame(
-            [
-                ["Total Videos", int(len(df))],
-                ["Total Views", int(df["Views"].sum()) if len(df) else 0],
-                ["Avg Views/Video", round(float(df["Views"].mean()), 2) if len(df) else 0.0],
-                ["Sentiment Index (−1..+1)", round(idx_val, 3)],
-            ],
-            columns=["Metric", "Value"],
-        )
         st.dataframe(topline, use_container_width=True, hide_index=True)
 
-        st.subheader("Category counts (1-last) — Overall")
+        st.subheader("Category counts (1-last)")
         st.dataframe(counts_tbl, use_container_width=True, hide_index=True)
 
-        st.subheader("Monthly breakdown (counts)")
-        st.dataframe(monthly_counts, use_container_width=True, hide_index=True)
-
     with c2:
-        st.subheader("Monthly Sentiment Index (line)")
-        if not monthly_index.empty:
-            line = (
-                alt.Chart(monthly_index)
-                .mark_line(point=True)
-                .encode(
-                    x=alt.X("YearMonth:N", sort=None, title="Month"),
-                    y=alt.Y("SentimentScore:Q", scale=alt.Scale(domain=[-1,1]), title="Index (-1..+1)"),
-                    tooltip=["YearMonth:N","SentimentScore:Q"]
-                )
-                .properties(height=320)
-            )
-            st.altair_chart(line, use_container_width=True)
-        else:
-            st.info("No monthly index to chart.")
-
-        st.subheader("Labeled Videos")
         prev = df.drop(columns=["VideoId"], errors="ignore").copy()
         prev.insert(0, "No.", range(1, len(prev) + 1))
+        st.subheader("Labeled Videos")
         st.dataframe(prev, use_container_width=True, height=520, hide_index=True)
 
-    # --- Downloads (unique keys)
+    # --- Downloads (unique keys to avoid DuplicateWidgetID)
     csv_buf = io.StringIO()
     df.to_csv(csv_buf, index=False)
     st.download_button(
         "Download CSV",
         data=csv_buf.getvalue(),
-        file_name=f"{channel.strip('@').lower()}_{start_year}-{int(start_month):02d}_to_{end_year}-{int(end_month):02d}.csv",
+        file_name=f"{channel.strip('@').lower()}_{year}-{int(month):02d}.csv",
         mime="text/csv",
         key="dl_csv",
     )
@@ -480,13 +410,11 @@ if run:
     with pd.ExcelWriter(xlsx_buf, engine="openpyxl") as xw:
         df.to_excel(xw, index=False, sheet_name="Videos")
         topline.to_excel(xw, index=False, sheet_name="Topline")
-        counts_tbl.to_excel(xw, index=False, sheet_name="OverallCounts")
-        monthly_counts.to_excel(xw, index=False, sheet_name="MonthlyCounts")
-        monthly_index.to_excel(xw, index=False, sheet_name="MonthlyIndex")
+        counts_tbl.to_excel(xw, index=False, sheet_name="SentimentCounts")
     st.download_button(
         "Download Excel",
         data=xlsx_buf.getvalue(),
-        file_name=f"{channel.strip('@').lower()}_{start_year}-{int(start_month):02d}_to_{end_year}-{int(end_month):02d}.xlsx",
+        file_name=f"{channel.strip('@').lower()}_{year}-{int(month):02d}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         key="dl_xlsx",
     )

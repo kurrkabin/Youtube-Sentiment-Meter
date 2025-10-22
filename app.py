@@ -215,11 +215,13 @@ def classify_titles_chatgpt(
         "Rules:\n"
         "1) Mixed/opposing signals → Neutral.\n"
         "2) Question marks / 'might/could' → Neutral unless clearly one-sided.\n"
-        "3) Clickbait adjectives/emojis do not decide direction.\n\n"
+        "3) Clickbait adjectives/emojis do not decide direction.\n"
+        "4) The 🚀 emoji usually signals Bullish unless the rest of the title clearly indicates a mixed or negative situation.\n\n"
         "Output JSON ONLY:\n"
         "{\"items\":[{\"index\":0, \"label\":\"Bullish|Bearish|Neutral\", "
-        "\"scores\":{\"Bullish\":0.0,\"Bearish\":0.0,\"Neutral\":0.0}}]}"
-    )
+        "\"scores\":{\"Bullish\":0.0,\"Bearish\":0.0,\"Neutral\":0.0}}]}\n"
+        "Scores should sum ~1; avoid 1.00 unless truly certain."
+)
 
     FEW_SHOT = [
         {

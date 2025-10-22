@@ -190,59 +190,7 @@ def _kw_override(title: str, model_label: str) -> str:
     return model_label
 
 @st.cache_data(show_spinner=True)
-def classify_titles_chatgpt(titles: List[str], api_key: str, model_name: str = "gpt-4o-mini", temperature: float = 0.0):
-    if not api_key:
-        raise RuntimeError("Missing OpenAI API key in secrets.")
-    client = OpenAI(api_key=api_key)
 
-    out = []
-    BATCH = 20
-    for i in range(0, len(titles), BATCH):
-        chunk = titles[i:i+BATCH]
-        payload = [{"index": j, "title": t} for j, t in enumerate(chunk)]
-        user_prompt = OPENAI_JSON_INSTRUCTIONS + json.dumps(payload, ensure_ascii=False)
-        needed_tokens = max(300, len(chunk) * 16)
-        try:
-            resp = client.chat.completions.create(
-                model=model_name,
-                response_format={"type": "json_object"},
-                temperature=temperature,
-                max_tokens=needed_tokens,
-                messages=[
-                    {"role":"system","content":"You output strict JSON only."},
-                    *FEW_SHOT,
-                    {"role":"user","content": user_prompt}
-                ],
-            )
-            raw = resp.choices[0].message.content or ""
-            data = raw if isinstance(raw, dict) else json.loads(raw)
-        except Exception:
-            # fallback when JSON mode is ignored
-            resp = client.chat.completions.create(
-                model=model_name,
-                temperature=temperature,
-                max_tokens=needed_tokens,
-                messages=[
-                    {"role":"system","content":"You output strict JSON only."},
-                    *FEW_SHOT,
-                    {"role":"user","content": user_prompt}
-                ],
-            )
-            data = _extract_json_block(resp.choices[0].message.content or "")
-
-        labels = ["Neutral"] * len(chunk)
-        for item in (data.get("labels") or []):
-            idx = item.get("index"); lab = item.get("label")
-            if isinstance(idx, int) and 0 <= idx < len(chunk) and lab in {"Bullish","Bearish","Neutral"}:
-                labels[idx] = lab
-
-        # keyword backstop
-        labels = [_kw_override(chunk[j], labels[j]) for j in range(len(chunk))]
-        out.extend(labels)
-
-    if len(out) != len(titles):
-        out += ["Neutral"] * (len(titles) - len(out))
-    return out
 
 def compute_index(df: pd.DataFrame, labels: List[str]) -> Tuple[float, pd.DataFrame]:
     score_map = {"Bullish": 1, "Neutral": 0, "Bearish": -1}
@@ -362,9 +310,12 @@ if run:
     try:
 
         labels = classify_titles_chatgpt(
-            df["Title"].astype(str).tolist(), OPENAI_KEY, model_name=model,
-            temperature=temperature
+            df["Title"].astype(str).tolist(),
+            OPENAI_KEY,
+            model_name=model,
+            temperature=0.0    
         )
+
 
     except Exception as e:
         st.error(f"ChatGPT classification failed: {e}")

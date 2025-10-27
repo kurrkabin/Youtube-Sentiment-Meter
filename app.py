@@ -2,7 +2,6 @@ import streamlit as st
 from openai import OpenAI
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-# in your project env / venv
 
 import pandas as pd
 import datetime as dt
@@ -13,13 +12,6 @@ from typing import List, Tuple
 
 # ---- tolerant JSON repair/parse for model replies ----
 import re, json
-
-# Try yfinance for ETH price
-try:
-    import yfinance as yf
-    _HAS_YF = True
-except Exception:
-    _HAS_YF = False
 
 
 def _safe_json_loads(raw: str) -> dict:
@@ -200,34 +192,40 @@ def fetch_range_for_months(channel: str, api_key: str, start_y: int, start_m: in
     return pd.concat(frames, ignore_index=True)
 
 # =========================
-# Ethereum price (Yahoo Finance)
+# Ethereum price (Yahoo Finance CSV – no packages)
 # =========================
+def _to_epoch_utc(d: dt.datetime) -> int:
+    return int(d.replace(tzinfo=dt.timezone.utc).timestamp())
+
 @st.cache_data(show_spinner=True)
 def fetch_eth_monthly(start_y: int, start_m: int, end_y: int, end_m: int) -> pd.DataFrame:
     """
-    Fetch ETH-USD daily OHLC from Yahoo Finance and downsample to month-end Close.
-    Returns DataFrame with columns: YearMonth (YYYY-MM), Close (float).
+    Pull ETH-USD daily history from Yahoo Finance CSV endpoint, then downsample to month-end Close.
+    Returns DataFrame: YearMonth (YYYY-MM), Close (float).
     """
-    if not _HAS_YF:
-        # Return empty; caller will handle gracefully
+    try:
+        start_dt, _ = month_range(start_y, start_m)
+        _, end_exclusive = month_range(end_y, end_m)  # first day *after* end month
+        p1 = _to_epoch_utc(start_dt)
+        p2 = _to_epoch_utc(end_exclusive)
+
+        url = (
+            "https://query1.finance.yahoo.com/v7/finance/download/ETH-USD"
+            f"?period1={p1}&period2={p2}&interval=1d&events=history&includeAdjustedClose=true"
+        )
+        df = pd.read_csv(url, parse_dates=["Date"])
+        if df is None or df.empty:
+            return pd.DataFrame(columns=["YearMonth", "Close"])
+
+        monthly = df.set_index("Date")["Close"].resample("M").last().to_frame().reset_index()
+        monthly["YearMonth"] = monthly["Date"].dt.strftime("%Y-%m")
+        monthly = monthly[["YearMonth", "Close"]]
+
+        ym_set = {f"{y}-{m:02d}" for (y, m) in months_between(start_y, start_m, end_y, end_m)}
+        return monthly[monthly["YearMonth"].isin(ym_set)].reset_index(drop=True)
+    except Exception:
+        # Soft-fail: show sentiment only if price fetch fails
         return pd.DataFrame(columns=["YearMonth", "Close"])
-
-    start_dt, _ = month_range(start_y, start_m)
-    _, end_exclusive = month_range(end_y, end_m)  # end is first day of the month AFTER end
-    # yfinance end is exclusive; OK as is
-    df = yf.download("ETH-USD", start=start_dt.date(), end=end_exclusive.date(), progress=False)
-    if df is None or df.empty:
-        return pd.DataFrame(columns=["YearMonth", "Close"])
-
-    # Resample to month end (last business day close in month)
-    monthly = df["Close"].resample("M").last().to_frame().reset_index()
-    monthly["YearMonth"] = monthly["Date"].dt.strftime("%Y-%m")
-    monthly = monthly[["YearMonth", "Close"]]
-
-    # Keep only the selected months (defensive)
-    ym_set = {f"{y}-{m:02d}" for (y, m) in months_between(start_y, start_m, end_y, end_m)}
-    monthly = monthly[monthly["YearMonth"].isin(ym_set)].reset_index(drop=True)
-    return monthly
 
 # =========================
 # Classifier (model-only)
@@ -415,7 +413,6 @@ def render_overall_score(score: float):
         unsafe_allow_html=True,
     )
 
-
 def show_sentiment_meter(score: float):
     score = max(-1.0, min(1.0, float(score)))   # clamp
     pos   = score + 1.0                         # map [-1,1] -> [0,2]
@@ -541,7 +538,7 @@ if run:
           .sort_values("YearMonth")
     )
 
-    # --- ETH price (monthly) from Yahoo Finance
+    # --- ETH price (monthly) from Yahoo Finance CSV
     eth_monthly = fetch_eth_monthly(int(start_year), int(start_month), int(end_year), int(end_month))
 
     c1, c2 = st.columns([1, 1])
@@ -566,11 +563,9 @@ if run:
     with c2:
         st.subheader("Monthly Sentiment Index (line) + ETH Price")
 
-        # count distinct months in the selected range
         n_months = monthly_index["YearMonth"].nunique()
 
         if n_months > 1:
-            # Base sentiment line (left axis)
             sent_line = (
                 alt.Chart(monthly_index)
                 .mark_line(point=True)
@@ -584,8 +579,7 @@ if run:
                 .properties(height=320)
             )
 
-            if _HAS_YF and not eth_monthly.empty:
-                # ETH line (right axis)
+            if not eth_monthly.empty:
                 eth_line = (
                     alt.Chart(eth_monthly)
                     .mark_line(point=True)
@@ -597,12 +591,10 @@ if run:
                     )
                     .properties(height=320)
                 )
-
                 layered = alt.layer(sent_line, eth_line).resolve_scale(y='independent')
                 st.altair_chart(layered, use_container_width=True)
             else:
-                if not _HAS_YF:
-                    st.info("Install `yfinance` to overlay ETH price (pip install yfinance). Showing sentiment only.")
+                st.info("Couldn't fetch ETH-USD prices right now. Showing sentiment only.")
                 st.altair_chart(sent_line, use_container_width=True)
         else:
             st.caption("Monthly line chart hidden (only one month in range).")

@@ -3,6 +3,7 @@ pandas==2.2.2
 numpy==1.26.4
 isodate==0.6.1
 openpyxl==3.1.5
+yfinance>=0.2.44
 
 # Google API client (avoid protobuf issues)
 google-api-python-client==2.141.0

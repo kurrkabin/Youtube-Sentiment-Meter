@@ -2,7 +2,6 @@ import streamlit as st
 from openai import OpenAI
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-import yfinance as yf
 
 import pandas as pd
 import datetime as dt

@@ -2,6 +2,8 @@ import streamlit as st
 from openai import OpenAI
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+# in your project env / venv
+pip install --upgrade yfinance
 
 import pandas as pd
 import datetime as dt

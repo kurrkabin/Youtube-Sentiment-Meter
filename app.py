@@ -20,7 +20,7 @@ SPORTS = [
 
 DATA_PATH = Path("tasks.json")
 
-# Auto-refresh cadence (milliseconds). Default: 5 minutes.
+# Invisible auto-check cadence (milliseconds). Default: 5 minutes.
 AUTO_REFRESH_MS = 300_000
 
 # --------------------------- Helpers ---------------------------
@@ -100,8 +100,11 @@ def live_utc_clock():
     # Renders a client-side live UTC clock (no reruns needed)
     st.markdown(
         """
-        <div id="utc-clock" style="text-align:right;font-variant-numeric:tabular-nums;">
-            <span style="opacity:.7">UTC</span> <strong id="utc-time">--:--:--</strong>
+        <div style="display:flex;justify-content:flex-end;">
+          <div id="utc-clock" style="text-align:right;font-variant-numeric:tabular-nums;">
+              <span style="opacity:.7;margin-right:.5rem;">UTC</span>
+              <strong id="utc-time">--:--:--</strong>
+          </div>
         </div>
         <script>
           function pad(n){return n.toString().padStart(2,'0');}
@@ -124,31 +127,28 @@ def live_utc_clock():
         unsafe_allow_html=True,
     )
 
-def play_beep_web_audio(unique_key: str):
-    """Use Web Audio API to generate a short beep—more reliable than autoplaying a file."""
+def play_beep_web_audio():
+    """Use Web Audio API to generate a short beep—reliable across browsers once tab is interacted with."""
     st.components.v1.html(
-        f"""
+        """
         <script>
-          (function() {{
-            try {{
+          (function() {
+            try {
               const ctx = new (window.AudioContext || window.webkitAudioContext)();
-              const o = ctx.createOscillator();
-              const g = ctx.createGain();
-              o.type = 'sine';
-              o.frequency.value = 880; // A5
-              o.connect(g);
-              g.connect(ctx.destination);
-              g.gain.setValueAtTime(0.0001, ctx.currentTime);
-              g.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.01);
-              o.start();
-              g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
-              o.stop(ctx.currentTime + 0.27);
-              // Nudge Safari iOS/resume if needed:
-              if (ctx.state === 'suspended') {{ ctx.resume(); }}
-            }} catch(e) {{
-              console.log('Beep error:', e);
-            }}
-          }})();
+              const osc = ctx.createOscillator();
+              const gain = ctx.createGain();
+              osc.type = 'sine';
+              osc.frequency.value = 880; // A5
+              osc.connect(gain);
+              gain.connect(ctx.destination);
+              gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+              gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.01);
+              osc.start();
+              gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
+              osc.stop(ctx.currentTime + 0.27);
+              if (ctx.state === 'suspended') { ctx.resume(); }
+            } catch(e) { console.log('Beep error:', e); }
+          })();
         </script>
         """,
         height=0,
@@ -159,19 +159,15 @@ ensure_state()
 
 st.title("⏰ Sport Trading Reminders (UTC)")
 
-# Top bar: live UTC clock (right) + refresh controls (left)
-lcol, rcol = st.columns([2, 1])
-with lcol:
-    st.caption("Keep this tab open; the app checks for due items every **5 minutes** and will beep.")
-with rcol:
-    live_utc_clock()
+# Top-right: live UTC clock. No refresh UI.
+live_utc_clock()
 
-# Auto-refresh every 5 minutes so due items trigger with no interaction
-from streamlit_autorefresh import st_autorefresh
-st_autorefresh(interval=AUTO_REFRESH_MS, key="auto_refresh_5m")
-
-# Manual refresh helper
-st.button("Manual refresh", on_click=lambda: None)
+# Invisible server-side auto-check every 5 minutes (no visible widget)
+try:
+    from streamlit_autorefresh import st_autorefresh
+    st_autorefresh(interval=AUTO_REFRESH_MS, key="auto_refresh_5m", limit=None)
+except Exception:
+    pass  # If the helper isn't installed, the app still works; you'll interact occasionally.
 
 st.markdown("---")
 
@@ -185,10 +181,14 @@ for sport in SPORTS:
         with c1:
             d = st.date_input(f"Date (UTC) – {sport}", value=today_utc, key=f"{sport}_date")
         with c2:
-            tm = st.time_input(f"Time (UTC) – {sport}", value=time(0, 0), key=f"{sport}_time")
+            tm = st.time_input(
+                f"Time (UTC) – {sport}",
+                value=time(0, 0),
+                key=f"{sport}_time",
+                step=timedelta(minutes=5),  # 5-minute increments
+            )
 
         with c3:
-            # Encourage action-style text per your examples
             txt = st.text_input(
                 f"Action / note – {sport}",
                 placeholder="e.g., goes live; freeze groups; freeze main market; settle score; trade live…",
@@ -217,12 +217,10 @@ done_tasks = [t for t in tasks_sorted if t["done"]]
 # Fire a beep exactly when we see newly-due, unalerted tasks
 newly_due = [t for t in due_tasks if not t.get("alerted", False)]
 if newly_due:
-    # mark alerted then save (so a reload won't double-beep)
     for t in newly_due:
         t["alerted"] = True
     save_tasks(st.session_state.tasks)
-    # beep
-    play_beep_web_audio(unique_key=str(uuid.uuid4()))
+    play_beep_web_audio()
     st.toast(f"🔔 {len(newly_due)} reminder(s) due now", icon="🔔")
 
 st.subheader("🔔 Due now")
@@ -268,4 +266,4 @@ with st.expander("✔️ Completed"):
             st.write(f"• **{t['sport']}** — {t['text']}  _(scheduled {format_dt(when)})_")
 
 st.markdown("---")
-st.caption("Tip: If your browser blocks sound until interaction, click anywhere in the page once at start.")
+st.caption("Note: Some browsers require one click on the page before audio can play.")
